@@ -1,0 +1,44 @@
+{
+  "family": "webapp-task-$ENV_VAR",
+  "networkMode": "awsvpc",
+  "executionRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
+  "taskRoleArn": "arn:aws:iam::513410254332:role/ecsTaskRole-$ENV_VAR",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "$APP_CPU",
+  "memory": "$APP_MEMORY",
+  "containerDefinitions": [
+    {
+      "name": "webapp",
+      "image": "placeholder-image-will-be-replaced-by-ci-cd",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "ENV",
+          "value": "$ENV_VAR"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "APP_SECRET",
+          "valueFrom": "<APP_SECRET_ARN>"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/webapp-$ENV_VAR",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
