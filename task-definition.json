@@ -3,9 +3,7 @@
   "networkMode": "awsvpc",
   "executionRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
   "taskRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
-  "requiresCompatibilities": [
-    "FARGATE"
-  ],
+  "requiresCompatibilities": ["EC2"],
   "cpu": "$APP_CPU",
   "memory": "$APP_MEMORY",
   "containerDefinitions": [
