@@ -2,7 +2,7 @@
   "family": "webapp-task-$ENV_VAR",
   "networkMode": "awsvpc",
   "executionRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
-  "taskRoleArn": "arn:aws:iam::513410254332:role/ecsTaskRole-$ENV_VAR",
+  "taskRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
   "requiresCompatibilities": [
     "FARGATE"
   ],
