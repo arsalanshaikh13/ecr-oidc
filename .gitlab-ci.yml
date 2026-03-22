@@ -13,14 +13,19 @@ variables:
   PROJECT_NAME: ECS-Fargate-ALB
 
 # ---------------------------------------------------------
-# GLOBAL CONFIGURATION (Applies to all AWS jobs)
+# GLOBAL CONFIGURATION
 # ---------------------------------------------------------
 default:
   id_tokens:
     GITLAB_OIDC_TOKEN:
       aud: https://gitlab.com
-  before_script:
-    - apk add --no-cache aws-cli jq gettext
+
+# ---------------------------------------------------------
+# HIDDEN HELPER: OIDC AUTHENTICATION
+# (This stores the complex login logic without running it)
+# ---------------------------------------------------------
+.aws_oidc_login:
+  script:
     - >
       export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s"
       $(aws sts assume-role-with-web-identity
@@ -41,6 +46,10 @@ build_image:
     - docker:24.0.5-dind
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+  before_script:
+    # Only install what is needed to login to ECR
+    - apk add --no-cache aws-cli
+    - !reference [.aws_oidc_login, script]
   script:
     - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
     - export IMAGE_TAG=$CI_COMMIT_SHA
@@ -50,11 +59,10 @@ build_image:
     - docker build -t $FULL_IMAGE_URI .
     - docker push $FULL_IMAGE_URI
 
-    # Save the exact Image URI to a dotenv file to pass to the next stage
     - echo "FULL_IMAGE_URI=$FULL_IMAGE_URI" > build.env
   artifacts:
     reports:
-      dotenv: frontend/build.env # Passes the variable securely downstream
+      dotenv: frontend/build.env
 
 # ---------------------------------------------------------
 # STAGE 2: PREPARE MANIFESTS
@@ -65,27 +73,27 @@ prepare_manifest:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   needs:
-    - job: build_image # Pulls the FULL_IMAGE_URI from Stage 1
+    - job: build_image
       artifacts: true
+  before_script:
+    # This is the ONLY stage that downloads jq and gettext
+    - apk add --no-cache aws-cli jq gettext
+    - !reference [.aws_oidc_login, script]
   script:
     - export SECRET_ID="${PROJECT_NAME}-secret"
 
-    # 1. Sync Secrets
     - export CURRENT_SECRET=$(aws secretsmanager get-secret-value --secret-id $SECRET_ID --query 'SecretString' --output text 2>/dev/null || echo "NOT_FOUND")
     - |
       if [ "$CURRENT_SECRET" != "$APP_SECRET_KEY" ]; then
         aws secretsmanager put-secret-value --secret-id $SECRET_ID --secret-string "$APP_SECRET_KEY"
       fi
 
-    # 2. Inject Variables
     - envsubst < $ECS_TASK_DEFINITION > temp.json
     - mv temp.json $ECS_TASK_DEFINITION
 
-    # 3. Inject Secret ARN
     - export EXACT_ARN=$(aws secretsmanager describe-secret --secret-id $SECRET_ID --query 'ARN' --output text)
     - sed -i "s|<APP_SECRET_ARN>|$EXACT_ARN|g" $ECS_TASK_DEFINITION
 
-    # 4. Inject Docker Image and create final artifact
     - >
       jq --arg IMAGE "$FULL_IMAGE_URI" --arg CONTAINER "$CONTAINER_NAME" 
       '(.containerDefinitions[] | select(.name == $CONTAINER)).image = $IMAGE' 
@@ -93,7 +101,7 @@ prepare_manifest:
 
   artifacts:
     paths:
-      - final-task-def.json # Save the rendered JSON for the deploy step
+      - final-task-def.json
     expire_in: 1 hour
 
 # ---------------------------------------------------------
@@ -105,8 +113,12 @@ deploy_ecs:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   needs:
-    - job: prepare_manifest # Downloads final-task-def.json
+    - job: prepare_manifest
       artifacts: true
+  before_script:
+    # Only install what is needed to trigger the ECS deployment
+    - apk add --no-cache aws-cli
+    - !reference [.aws_oidc_login, script]
   script:
     - REVISION_ARN=$(aws ecs register-task-definition --cli-input-json file://final-task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
     - aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $REVISION_ARN > /dev/null
