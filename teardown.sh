@@ -11,6 +11,27 @@ echo "======================================================"
 echo " 🛑 Initiating Safe ECS Teardown Sequence..."
 echo "======================================================"
 
+# Step 1: Remove the Load Balancer's safety net
+echo "1️⃣ Modifying Target Group ($TARGET_GROUP_NAME) to drop connections instantly..."
+
+# Retrieve the exact ARN of the Target Group
+TG_ARN=$(aws elbv2 describe-target-groups \
+  --names "$TARGET_GROUP_NAME" \
+  --region "$REGION" \
+  --query 'TargetGroups[0].TargetGroupArn' \
+  --output text 2>/dev/null)
+
+if [ -n "$TG_ARN" ]; then
+  # Force the draining delay to 0 seconds
+  aws elbv2 modify-target-group-attributes \
+    --target-group-arn "$TG_ARN" \
+    --attributes Key=deregistration_delay.timeout_seconds,Value=0 \
+    --region "$REGION" > /dev/null
+  echo "   ✅ Deregistration delay set to 0. Safety nets removed."
+else
+  echo "⚠️ Target Group not found (It may already be deleted). Proceeding..."
+fi
+
 # Step 1: Tell AWS to drain the tasks
 echo "1️⃣ Scaling $SERVICE_NAME to 0 tasks..."
 aws ecs update-service \
