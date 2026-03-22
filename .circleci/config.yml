@@ -53,7 +53,12 @@ jobs:
 
             if [ "$CURRENT_SECRET" != "$APP_SECRET_KEY" ]; then
               echo "Changes detected. Pushing new plaintext value..."
-              aws secretsmanager put-secret-value --secret-id $SECRET_ID --secret-string "$APP_SECRET_KEY"
+              JSON_STRING=$(jq -n --arg key "$SECRET_VALUE" '{APP_SECRET_KEY: $key}')
+
+              # Push the new value to AWS Secrets Manager
+              aws secretsmanager put-secret-value \
+                --secret-id $SECRET_ID \
+                --secret-string "$JSON_STRING"
             else
               echo "Secret matches. Skipping update."
             fi
