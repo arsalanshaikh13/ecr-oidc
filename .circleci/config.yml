@@ -1,0 +1,140 @@
+version: 2.1
+
+# ---------------------------------------------------------
+# ORBS: CircleCI's pre-packaged toolsets
+# ---------------------------------------------------------
+orbs:
+  # This orb securely handles the OIDC authentication behind the scenes
+  aws-cli: circleci/aws-cli@4.1.2
+
+jobs:
+  build-and-deploy:
+    docker:
+      # This CircleCI-maintained image comes with the AWS CLI, Docker, jq, and envsubst pre-installed!
+      - image: cimg/aws:2024.03
+
+    environment:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: webapp-dev
+      ECS_SERVICE: webapp-service-dev
+      ECS_CLUSTER: ecs-cluster-dev
+      ECS_TASK_DEFINITION: task-definition.json
+      CONTAINER_NAME: webapp
+      PROJECT_NAME: ECS-Fargate-ALB
+      # Note: ACCOUNT_ID, APP_SECRET_KEY, ENV_VAR, APP_CPU, and APP_MEMORY
+      # should be configured securely in a CircleCI Context
+
+    steps:
+      - checkout
+
+      # ---------------------------------------------------------
+      # SETUP REMOTE DOCKER
+      # Required by CircleCI to run 'docker build' and 'docker push'
+      # ---------------------------------------------------------
+      - setup_remote_docker:
+          version: default
+
+      # ---------------------------------------------------------
+      # 1. AUTHENTICATE VIA OIDC
+      # ---------------------------------------------------------
+      - aws-cli/setup:
+          role_arn: "arn:aws:iam::${ACCOUNT_ID}:role/CircleCIActions-ECS-DeployRole"
+          region: ${AWS_REGION}
+          profile_name: default
+
+      # ---------------------------------------------------------
+      # 2. IDEMPOTENT SECRET SYNC (Plaintext)
+      # ---------------------------------------------------------
+      - run:
+          name: Sync Secret to AWS Secrets Manager
+          command: |
+            SECRET_ID="${PROJECT_NAME}-secret"
+            CURRENT_SECRET=$(aws secretsmanager get-secret-value --secret-id $SECRET_ID --query 'SecretString' --output text 2>/dev/null || echo "NOT_FOUND")
+
+            if [ "$CURRENT_SECRET" != "$APP_SECRET_KEY" ]; then
+              echo "Changes detected. Pushing new plaintext value..."
+              JSON_STRING=$(jq -n --arg key "$SECRET_VALUE" '{APP_SECRET_KEY: $key}')
+
+              # Push the new value to AWS Secrets Manager
+              aws secretsmanager put-secret-value \
+                --secret-id $SECRET_ID \
+                --secret-string "$JSON_STRING"
+            else
+              echo "Secret matches. Skipping update."
+            fi
+
+      # ---------------------------------------------------------
+      # 3. BUILD & PUSH IMAGE TO ECR
+      # ---------------------------------------------------------
+      - run:
+          name: Build and Push Docker Image
+          command: |
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+            # CIRCLE_SHA1 is the CircleCI equivalent of github.sha
+            IMAGE_TAG=$CIRCLE_SHA1
+            FULL_IMAGE_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG"
+
+            cd frontend
+            docker build -t $FULL_IMAGE_URI .
+            docker push $FULL_IMAGE_URI
+
+            # Save the image URI to the BASH_ENV to pass it to the next step natively
+            echo "export FULL_IMAGE_URI=$FULL_IMAGE_URI" >> $BASH_ENV
+
+      # ---------------------------------------------------------
+      # 4. PREPARE MANIFESTS
+      # ---------------------------------------------------------
+      - run:
+          name: Inject Variables and Render Task Definition
+          command: |
+            SECRET_ID="${PROJECT_NAME}-secret"
+
+            # Substitute environment variables
+            envsubst < $ECS_TASK_DEFINITION > temp.json
+            mv temp.json $ECS_TASK_DEFINITION
+
+            # Inject dynamic Secret ARN
+            EXACT_ARN=$(aws secretsmanager describe-secret --secret-id $SECRET_ID --query 'ARN' --output text)
+            sed -i "s|<APP_SECRET_ARN>|$EXACT_ARN|g" $ECS_TASK_DEFINITION
+
+            # Load the FULL_IMAGE_URI variable saved in the previous step
+            source $BASH_ENV
+
+            # Update the image URI using jq
+            jq --arg IMAGE "$FULL_IMAGE_URI" --arg CONTAINER "$CONTAINER_NAME" \
+              '(.containerDefinitions[] | select(.name == $CONTAINER)).image = $IMAGE' \
+              $ECS_TASK_DEFINITION > final-task-def.json
+
+      # ---------------------------------------------------------
+      # 5. DEPLOY TO ECS
+      # ---------------------------------------------------------
+      - run:
+          name: Deploy to Amazon ECS
+          command: |
+            # Register new task definition
+            REVISION_ARN=$(aws ecs register-task-definition --cli-input-json file://final-task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
+            echo "Registered new revision: $REVISION_ARN"
+
+            # Update ECS Service
+            aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $REVISION_ARN > /dev/null
+
+            # Wait for stability
+            echo "Waiting for service stability..."
+            aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE
+            echo "Deployment Successful!"
+
+# ---------------------------------------------------------
+# WORKFLOW ORCHESTRATION
+# ---------------------------------------------------------
+workflows:
+  deploy-workflow:
+    jobs:
+      - build-and-deploy:
+          # CircleCI uses "Contexts" to securely inject your organization-level secrets
+          context: aws-deploy-context
+          filters:
+            branches:
+              only:
+                - circleci
+                - circle-ci-fargate
