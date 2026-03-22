@@ -66,6 +66,11 @@ variable "desired_count" {
   type        = number
   default     = 1
 }
+variable "domain_name" {
+  description = "The primary domain name for the application (e.g., example.com)"
+  type        = string
+  default = "devsandbox.space"
+}
 
 variable "project_name" {}
 variable "vpc_cidr" {}

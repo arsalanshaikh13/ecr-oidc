@@ -167,6 +167,41 @@ resource "aws_secretsmanager_secret" "app_secret" {
 #---------------------------------------------
 # New: Security Group for ECS tasks (allows outbound; ALB -> tasks ingress)
 #---------------------------------------------
+
+# security group for alb
+resource "aws_security_group" "alb_sg" {
+  name        = "alb security group"
+  description = "enable http/https access on port 80/443"
+  vpc_id      = aws_vpc.vpc.id
+
+  ingress {
+    description = "http access"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "https access"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "alb_sg"
+  })
+}
+
 resource "aws_security_group" "app_task_sg" {
   name        = "webapp-task-sg-${local.env_suffix}"
   description = "SG for ECS tasks to allow egress to AWS endpoints; ALB allowed to connect on 80"
@@ -213,6 +248,58 @@ resource "aws_ecs_cluster" "app_cluster" {
 }
 
 #---------------------------------------------
+# 7. Route 53 & ACM Certificate (HTTPS)
+#---------------------------------------------
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+resource "aws_acm_certificate" "app_cert" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+  subject_alternative_names = ["*.${var.domain_name}"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.app_cert.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.main.zone_id
+}
+
+resource "aws_acm_certificate_validation" "app_cert_wait" {
+  certificate_arn         = aws_acm_certificate.app_cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
+resource "aws_route53_record" "app_alias" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.app_alb.dns_name
+    zone_id                = aws_lb.app_alb.zone_id
+    evaluate_target_health = true
+  }
+}
+
+#---------------------------------------------
 # 4. ALB + Target Group + Listener
 #---------------------------------------------
 resource "aws_lb" "app_alb" {
@@ -252,16 +339,37 @@ resource "aws_lb_target_group" "app_tg" {
   tags = local.common_tags
 }
 
-resource "aws_lb_listener" "app_listener" {
+
+# Redirect HTTP to HTTPS
+resource "aws_lb_listener" "http_redirect" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = 80
   protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# Secure HTTPS Listener
+resource "aws_lb_listener" "app_listener_https_secure" {
+  load_balancer_arn = aws_lb.app_alb.arn
+  port              = 443
+  protocol          = "HTTPS"
+  certificate_arn   = aws_acm_certificate_validation.app_cert_wait.certificate_arn
 
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app_tg.arn
   }
 }
+
+
 #---------------------------------------------
 # 5. ECS Task Definition
 #---------------------------------------------
@@ -355,7 +463,7 @@ resource "aws_ecs_service" "app_service" {
   deployment_maximum_percent         = 200
 
   depends_on = [
-    aws_lb_listener.app_listener
+    aws_lb_listener.app_listener_https_secure
     # null_resource.frontend_image
   ]
 
