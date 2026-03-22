@@ -5,6 +5,7 @@
 # ==========================================================
 CLUSTER_NAME="ecs-cluster-dev"
 SERVICE_NAME="webapp-service-dev"
+ASG_NAME="ecs-asg-dev"
 REGION="us-east-1"
 
 echo "======================================================"
@@ -49,6 +50,22 @@ while true; do
     sleep 10
   fi
 done
+
+# Step 3: Terminate the EC2 Instances
+echo "3️⃣ Scaling Auto Scaling Group ($ASG_NAME) to 0 instances..."
+aws autoscaling update-auto-scaling-group \
+  --auto-scaling-group-name "$ASG_NAME" \
+  --min-size 0 \
+  --desired-capacity 0 \
+  --region "$REGION" > /dev/null
+
+if [ $? -ne 0 ]; then
+  echo "⚠️ Failed to update ASG. It may have already been deleted."
+else
+  echo "✅ EC2 instances are terminating..."
+  # Give AWS a few seconds to register the termination state before Terraform hits the API
+  sleep 10
+fi
 
 # Step 3: Trigger Terraform
 echo "======================================================"

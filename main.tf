@@ -15,7 +15,7 @@ resource "aws_ecr_repository" "app_repo" {
   }
   
   encryption_configuration {
-    encryption_type = "KMS"
+    encryption_type = "AES256"
   }
 
   tags = merge(local.common_tags, { Name = "ecr-webapp-${local.env_suffix}" })
@@ -157,19 +157,55 @@ resource "aws_secretsmanager_secret" "app_secret" {
   tags = merge(local.common_tags, { Name = "${var.project_name}-secret" })
 }
 
-resource "aws_secretsmanager_secret_version" "app_secret_version" {
-  secret_id = aws_secretsmanager_secret.app_secret.id
-  secret_string = jsonencode({
-    APP_SECRET_KEY = "${var.secret_key}"
+# resource "aws_secretsmanager_secret_version" "app_secret_version" {
+#   secret_id = aws_secretsmanager_secret.app_secret.id
+#   secret_string = jsonencode({
+#     APP_SECRET_KEY = "${var.secret_key}"
 
-  })
-}
+#   })
+# }
 
 
 
 #---------------------------------------------
 # 5. Security Groups
 #---------------------------------------------
+
+# security group for alb
+resource "aws_security_group" "alb_sg" {
+  name        = "alb security group"
+  description = "enable http/https access on port 80/443"
+  vpc_id      = aws_vpc.vpc.id
+
+  ingress {
+    description = "http access"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "https access"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "alb_sg"
+  })
+}
+
+
 # Task SG (For the individual containers running in awsvpc mode)
 resource "aws_security_group" "app_task_sg" {
   name        = "webapp-task-sg-${local.env_suffix}"
@@ -292,7 +328,59 @@ resource "aws_ecs_cluster_capacity_providers" "cluster_attach" {
 }
 
 #---------------------------------------------
-# 8. ALB + Target Group + Listener
+# 8. Route 53 & ACM Certificate (HTTPS)
+#---------------------------------------------
+data "aws_route53_zone" "main" {
+  name         = var.domain_name
+  private_zone = false
+}
+
+resource "aws_acm_certificate" "app_cert" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+  subject_alternative_names = ["*.${var.domain_name}"]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_route53_record" "cert_validation" {
+  for_each = {
+    for dvo in aws_acm_certificate.app_cert.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.main.zone_id
+}
+
+resource "aws_acm_certificate_validation" "app_cert_wait" {
+  certificate_arn         = aws_acm_certificate.app_cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
+resource "aws_route53_record" "app_alias" {
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.app_alb.dns_name
+    zone_id                = aws_lb.app_alb.zone_id
+    evaluate_target_health = true
+  }
+}
+
+#---------------------------------------------
+# 9. ALB + Target Group + Listener
 #---------------------------------------------
 resource "aws_lb" "app_alb" {
   name               = "alb-${local.env_suffix}"
@@ -323,10 +411,28 @@ resource "aws_lb_target_group" "app_tg" {
   }
 }
 
-resource "aws_lb_listener" "app_listener" {
+# Redirect HTTP to HTTPS
+resource "aws_lb_listener" "http_redirect" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = 80
-  protocol          = "HTTP" 
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# Secure HTTPS Listener
+resource "aws_lb_listener" "app_listener_https_secure" {
+  load_balancer_arn = aws_lb.app_alb.arn
+  port              = 443
+  protocol          = "HTTPS"
+  certificate_arn   = aws_acm_certificate_validation.app_cert_wait.certificate_arn
 
   default_action {
     type             = "forward"
@@ -335,7 +441,7 @@ resource "aws_lb_listener" "app_listener" {
 }
 
 #---------------------------------------------
-# 9. ECS Task Definition
+# 10. ECS Task Definition
 #---------------------------------------------
 resource "aws_ecs_task_definition" "app_task" {
   family                   = "webapp-task-${local.env_suffix}"
@@ -349,7 +455,8 @@ resource "aws_ecs_task_definition" "app_task" {
   container_definitions = jsonencode([
     {
       name      = "webapp"
-      image     = "${aws_ecr_repository.app_repo.repository_url}:latest" 
+      # image     = "${aws_ecr_repository.app_repo.repository_url}:latest" 
+      image     = "httpd:2.4-alpine" # Bootstrapping image
       essential = true
 
       portMappings = [{
@@ -380,7 +487,7 @@ resource "aws_ecs_task_definition" "app_task" {
 }
 
 #---------------------------------------------
-# 10. ECS Service
+# 11. ECS Service
 #---------------------------------------------
 resource "aws_ecs_service" "app_service" {
   name             = "webapp-service-${local.env_suffix}"
@@ -424,13 +531,13 @@ resource "aws_ecs_service" "app_service" {
   }
 
   depends_on = [
-    aws_lb_listener.app_listener,
+    aws_lb_listener.app_listener_https_secure,
     aws_ecs_cluster_capacity_providers.cluster_attach # Ensure CP is attached before Service uses it
   ]
 }
 
 #---------------------------------------------
-# 11. Application Auto Scaling (Task Level)
+# 12. Application Auto Scaling (Task Level)
 #---------------------------------------------
 resource "aws_appautoscaling_target" "ecs_target" {
   max_capacity       = 10
