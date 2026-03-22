@@ -331,7 +331,10 @@ resource "aws_ecs_service" "app_service" {
   launch_type      = "FARGATE"
   platform_version = "LATEST"
 
-
+# ADD THIS: Force Terraform to give up faster if AWS hangs
+  timeouts {
+    delete = "5m" 
+  }
   network_configuration {
     # subnets          = var.public_subnets
     subnets = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id]
