@@ -3,6 +3,18 @@ stages:
   - prepare
   - deploy
 
+# ---------------------------------------------------------
+# PIPELINE TRIGGER RULES (Replaces individual job rules)
+# ---------------------------------------------------------
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"' # Manual trigger via UI
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "fargate"'
+      changes:
+        - frontend/**/*
+        - .gitlab-ci.yml
+
 variables:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: webapp-dev
@@ -44,8 +56,6 @@ build_image:
   image: docker:24.0.5
   services:
     - docker:24.0.5-dind
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
   before_script:
     # Only install what is needed to login to ECR
     - apk add --no-cache aws-cli
@@ -70,8 +80,6 @@ build_image:
 prepare_manifest:
   stage: prepare
   image: alpine:latest
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
   needs:
     - job: build_image
       artifacts: true
@@ -110,8 +118,6 @@ prepare_manifest:
 deploy_ecs:
   stage: deploy
   image: alpine:latest
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
   needs:
     - job: prepare_manifest
       artifacts: true
