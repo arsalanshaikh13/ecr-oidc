@@ -1,15 +1,9 @@
 {
   "family": "webapp-task-$ENV_VAR",
   "networkMode": "awsvpc",
-<<<<<<< HEAD
-  "executionRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
-  "taskRoleArn": "arn:aws:iam::513410254332:role/ecsTaskExecutionRole-$ENV_VAR",
-  "requiresCompatibilities": ["EC2"],
-=======
   "executionRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/ecsTaskExecutionRole-$ENV_VAR",
   "taskRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/ecsTaskExecutionRole-$ENV_VAR",
-  "requiresCompatibilities": ["FARGATE"],
->>>>>>> 42da770 ( variable in task definition.json file)
+  "requiresCompatibilities": ["EC2"],
   "cpu": "$APP_CPU",
   "memory": "$APP_MEMORY",
   "containerDefinitions": [
