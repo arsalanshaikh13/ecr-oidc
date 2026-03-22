@@ -218,7 +218,8 @@ data "aws_ssm_parameter" "ecs_optimized_ami" {
 resource "aws_launch_template" "ecs_lt" {
   name_prefix   = "ecs-template-${local.env_suffix}"
   image_id      = data.aws_ssm_parameter.ecs_optimized_ami.value
-  instance_type = "t3.medium"
+  # instance_type = "t3.medium"
+  instance_type = "c7i-flex.large"
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ecs_node_profile.name
