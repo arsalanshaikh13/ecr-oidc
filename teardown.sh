@@ -6,6 +6,7 @@
 CLUSTER_NAME="ecs-cluster-dev"
 SERVICE_NAME="webapp-service-dev"
 REGION="us-east-1"
+TARGET_GROUP_NAME="tg-dev" # Update this to match your exact Target Group name
 
 echo "======================================================"
 echo " 🛑 Initiating Safe ECS Teardown Sequence..."
