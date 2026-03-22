@@ -36,7 +36,7 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::513410254332:role/GitHubActions-ECS-DeployRole
+          role-to-assume: arn:aws:iam::${{ vars.ACCOUNT_ID }}:role/GitHubActions-ECS-DeployRole
           aws-region: ${{ env.AWS_REGION }}
 
       # ---------------------------------------------------------
@@ -94,6 +94,7 @@ jobs:
           ENV_VAR: ${{ vars.ENV_VAR }}
           APP_CPU: ${{ vars.APP_CPU }}
           APP_MEMORY: ${{ vars.APP_MEMORY }}
+          ACCOUNT_ID: ${{ vars.ACCOUNT_ID }}
         run: |
           # 1. envsubst reads the template and writes to a temporary file
           envsubst < ${{ env.ECS_TASK_DEFINITION }} > temp.json
