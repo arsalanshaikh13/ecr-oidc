@@ -1,4 +1,6 @@
 stages:
+  - build
+  - prepare
   - deploy
 
 variables:
@@ -9,110 +11,104 @@ variables:
   ECS_TASK_DEFINITION: task-definition.json
   CONTAINER_NAME: webapp
   PROJECT_NAME: ECS-Fargate-ALB
-  # Note: ACCOUNT_ID, APP_SECRET_KEY, ENV_VAR, APP_CPU, APP_MEMORY
-  # should be configured in GitLab -> Settings -> CI/CD -> Variables
 
-deploy_to_ecs:
-  stage: deploy
-  # Use a Docker-in-Docker capable image to run Docker builds
-  image: docker:24.0.5
-  services:
-    - docker:24.0.5-dind
-
-  # 1. Define OIDC Token mapped to GitLab
+# ---------------------------------------------------------
+# GLOBAL CONFIGURATION (Applies to all AWS jobs)
+# ---------------------------------------------------------
+default:
   id_tokens:
     GITLAB_OIDC_TOKEN:
       aud: https://gitlab.com
-
-  # 2. Trigger Rules (Equivalent to GitHub 'on: push & workflow_dispatch')
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "web"' # Manual trigger
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "fargate"'
-      changes:
-        - frontend/**/*
-        - .gitlab-ci.yml
-
-  # 3. Install required tools inside the Alpine runner
   before_script:
-    - apk add --no-cache aws-cli gettext jq curl
-
-    # 4. Authenticate with AWS via OIDC
+    - apk add --no-cache aws-cli jq gettext
     - >
       export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s"
       $(aws sts assume-role-with-web-identity
       --role-arn arn:aws:iam::${ACCOUNT_ID}:role/GitLabActions-ECS-DeployRole
-      --role-session-name "GitLabRunner-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
+      --role-session-name "GitLabRunner-${CI_PIPELINE_ID}"
       --web-identity-token ${GITLAB_OIDC_TOKEN}
       --duration-seconds 3600
       --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
       --output text))
-    - aws sts get-caller-identity # Verify successful authentication
 
+# ---------------------------------------------------------
+# STAGE 1: BUILD & PUSH
+# ---------------------------------------------------------
+build_image:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
-    # ---------------------------------------------------------
-    # IDEMPOTENT SECRET SYNC (Plaintext version)
-    # ---------------------------------------------------------
-    - echo "Syncing Secret to AWS Secrets Manager..."
-    - export SECRET_ID="${PROJECT_NAME}-secret"
-    - export CURRENT_SECRET=$(aws secretsmanager get-secret-value --secret-id $SECRET_ID --query 'SecretString' --output text 2>/dev/null || echo "NOT_FOUND")
-
-    - |
-      if [ "$CURRENT_SECRET" != "$APP_SECRET_KEY" ]; then
-        echo "Changes detected or secret missing. Pushing new plaintext value to AWS..."
-        aws secretsmanager put-secret-value --secret-id $SECRET_ID --secret-string "$APP_SECRET_KEY"
-        echo "Successfully updated secret version for: $SECRET_ID"
-      else
-        echo "Secret matches existing AWS version. Skipping update."
-      fi
-
-    # ---------------------------------------------------------
-    # BUILD & PUSH DOCKER IMAGE
-    # ---------------------------------------------------------
-    - echo "Logging in to ECR..."
     - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-
     - export IMAGE_TAG=$CI_COMMIT_SHA
     - export FULL_IMAGE_URI=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG
 
-    - echo "Building and Pushing Image..."
     - cd frontend
     - docker build -t $FULL_IMAGE_URI .
     - docker push $FULL_IMAGE_URI
-    - cd ..
 
-    # ---------------------------------------------------------
-    # INJECT VARIABLES (envsubst)
-    # ---------------------------------------------------------
-    - echo "Injecting Environment Variables..."
+    # Save the exact Image URI to a dotenv file to pass to the next stage
+    - echo "FULL_IMAGE_URI=$FULL_IMAGE_URI" > build.env
+  artifacts:
+    reports:
+      dotenv: frontend/build.env # Passes the variable securely downstream
+
+# ---------------------------------------------------------
+# STAGE 2: PREPARE MANIFESTS
+# ---------------------------------------------------------
+prepare_manifest:
+  stage: prepare
+  image: alpine:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs:
+    - job: build_image # Pulls the FULL_IMAGE_URI from Stage 1
+      artifacts: true
+  script:
+    - export SECRET_ID="${PROJECT_NAME}-secret"
+
+    # 1. Sync Secrets
+    - export CURRENT_SECRET=$(aws secretsmanager get-secret-value --secret-id $SECRET_ID --query 'SecretString' --output text 2>/dev/null || echo "NOT_FOUND")
+    - |
+      if [ "$CURRENT_SECRET" != "$APP_SECRET_KEY" ]; then
+        aws secretsmanager put-secret-value --secret-id $SECRET_ID --secret-string "$APP_SECRET_KEY"
+      fi
+
+    # 2. Inject Variables
     - envsubst < $ECS_TASK_DEFINITION > temp.json
     - mv temp.json $ECS_TASK_DEFINITION
 
-    # ---------------------------------------------------------
-    # INJECT SECRET ARN (sed)
-    # ---------------------------------------------------------
-    - echo "Injecting Secret ARN..."
+    # 3. Inject Secret ARN
     - export EXACT_ARN=$(aws secretsmanager describe-secret --secret-id $SECRET_ID --query 'ARN' --output text)
     - sed -i "s|<APP_SECRET_ARN>|$EXACT_ARN|g" $ECS_TASK_DEFINITION
 
-    # ---------------------------------------------------------
-    # RENDER NEW TASK DEFINITION (Replacing AWS GitHub Action)
-    # ---------------------------------------------------------
-    - echo "Rendering final task definition with new image URI..."
+    # 4. Inject Docker Image and create final artifact
     - >
       jq --arg IMAGE "$FULL_IMAGE_URI" --arg CONTAINER "$CONTAINER_NAME" 
       '(.containerDefinitions[] | select(.name == $CONTAINER)).image = $IMAGE' 
       $ECS_TASK_DEFINITION > final-task-def.json
 
-    # ---------------------------------------------------------
-    # DEPLOY TO ECS (Replacing AWS GitHub Action)
-    # ---------------------------------------------------------
-    - echo "Registering new task definition in AWS..."
+  artifacts:
+    paths:
+      - final-task-def.json # Save the rendered JSON for the deploy step
+    expire_in: 1 hour
+
+# ---------------------------------------------------------
+# STAGE 3: DEPLOY
+# ---------------------------------------------------------
+deploy_ecs:
+  stage: deploy
+  image: alpine:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs:
+    - job: prepare_manifest # Downloads final-task-def.json
+      artifacts: true
+  script:
     - REVISION_ARN=$(aws ecs register-task-definition --cli-input-json file://final-task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
-    - echo "Registered new revision $REVISION_ARN"
-
-    - echo "Updating ECS Service..."
     - aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $REVISION_ARN > /dev/null
-
-    - echo "Waiting for service to reach steady state (Stability check)..."
     - aws ecs wait services-stable --cluster $ECS_CLUSTER --services $ECS_SERVICE
     - echo "Deployment Successful!"
