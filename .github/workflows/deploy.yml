@@ -4,10 +4,11 @@ on:
   push:
     branches:
       - main
+      - fargate
     paths:
-      - 'frontend/**'
-      - '.github/workflows/**' # Triggers if you update this pipeline file
-  workflow_dispatch:           # Allows you to trigger deployments/secret rotations manually via the GitHub UI
+      - "frontend/**"
+      - ".github/workflows/**" # Triggers if you update this pipeline file
+  workflow_dispatch: # Allows you to trigger deployments/secret rotations manually via the GitHub UI
 
 env:
   AWS_REGION: us-east-1
@@ -35,12 +36,11 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::513410254332:role/GitHubActions-ECS-DeployRole
+          role-to-assume: arn:aws:iam::${{ vars.ACCOUNT_ID }}:role/GitHubActions-ECS-DeployRole
           aws-region: ${{ env.AWS_REGION }}
-      
-      
+
       # ---------------------------------------------------------
-      # IDEMPOTENT SECRET SYNC 
+      # IDEMPOTENT SECRET SYNC
       # ---------------------------------------------------------
       - name: Sync  Secret to AWS Secrets Manager
         env:
@@ -54,7 +54,7 @@ jobs:
           if [ "$CURRENT_SECRET" != "$SECRET_VALUE" ]; then
             echo "Changes detected or secret missing. Pushing new plaintext value to AWS..."
             JSON_STRING=$(jq -n --arg key "$SECRET_VALUE" '{APP_SECRET_KEY: $key}')
-          
+
             # Push the new value to AWS Secrets Manager
             aws secretsmanager put-secret-value \
               --secret-id $SECRET_ID \
@@ -66,7 +66,6 @@ jobs:
             echo "Secret matches existing AWS version. Skipping update."
           fi
 
-      
       # ---------------------------------------------------------
       # BUILD & DEPLOY
       # ---------------------------------------------------------
@@ -86,7 +85,7 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           # Output the image URI for the next step
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-      
+
       # ---------------------------------------------------------
       # INJECT VARIABLES (The CI/CD equivalent of .tfvars)
       # ---------------------------------------------------------
@@ -95,15 +94,16 @@ jobs:
           ENV_VAR: ${{ vars.ENV_VAR }}
           APP_CPU: ${{ vars.APP_CPU }}
           APP_MEMORY: ${{ vars.APP_MEMORY }}
+          ACCOUNT_ID: ${{ vars.ACCOUNT_ID }}
         run: |
           # 1. envsubst reads the template and writes to a temporary file
           envsubst < ${{ env.ECS_TASK_DEFINITION }} > temp.json
-          
+
           # 2. Overwrite the original file in the GitHub runner's memory
           mv temp.json ${{ env.ECS_TASK_DEFINITION }}
-          
+
           echo "Successfully injected variables into ${{ env.ECS_TASK_DEFINITION }}"
-      
+
       # ---------------------------------------------------------
       # INJECT DYNAMIC ARN INTO TASK DEFINITION
       # ---------------------------------------------------------
@@ -113,14 +113,14 @@ jobs:
         run: |
           # 1. Ask AWS for the exact ARN of the secret
           EXACT_ARN=$(aws secretsmanager describe-secret --secret-id $SECRET_ID --query 'ARN' --output text)
-          
+
           echo "Found Secret ARN: $EXACT_ARN"
-          
+
           # 2. Replace the placeholder in the JSON file with the real ARN
           sed -i "s|<APP_SECRET_ARN>|$EXACT_ARN|g" ${{ env.ECS_TASK_DEFINITION }}
-          
+
           echo "Successfully injected ARN into task-definition.json"
-      
+
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1

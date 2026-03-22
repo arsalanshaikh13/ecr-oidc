@@ -387,6 +387,10 @@ resource "aws_ecs_service" "app_service" {
   task_definition  = aws_ecs_task_definition.app_task.arn
   desired_count    = var.desired_count
 
+  # ADD THIS: Force Terraform to give up faster if AWS hangs
+  timeouts {
+    delete = "5m" 
+  }
   # Removed launch_type = "FARGATE", replaced with Capacity Provider Strategy
   capacity_provider_strategy {
     capacity_provider = aws_ecs_capacity_provider.ec2_provider.name
