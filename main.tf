@@ -402,7 +402,7 @@ resource "aws_lb_target_group" "app_tg" {
   deregistration_delay = 30
 
   health_check {
-    path                = "/"
+    path                = "/health"
     healthy_threshold   = 3
     unhealthy_threshold = 2
     timeout             = 5
