@@ -1,6 +1,6 @@
 {
   "family": "webapp-task-$ENV_VAR",
-  "networkMode": "bridge",
+  "networkMode": "awsvpc",
   "executionRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/ecsTaskExecutionRole-$ENV_VAR",
   "taskRoleArn": "arn:aws:iam::$ACCOUNT_ID:role/ecsTaskExecutionRole-$ENV_VAR",
   "requiresCompatibilities": ["EC2"],

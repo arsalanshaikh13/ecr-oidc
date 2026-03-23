@@ -369,10 +369,11 @@ resource "aws_launch_template" "ecs_lt" {
 
 resource "aws_autoscaling_group" "ecs_asg" {
   name                = "ecs-asg-${local.env_suffix}"
-  vpc_zone_identifier = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id]
+  # vpc_zone_identifier = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id]
+  vpc_zone_identifier = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id]
   
   min_size         = 1
-  max_size         = 5
+  max_size         = 3
   desired_capacity = 1
 
   launch_template {
@@ -485,6 +486,7 @@ resource "aws_lb" "app_alb" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
   subnets            = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id]
+  # subnets            = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id]
   # enable_deletion_protection = true 
 }
 
@@ -493,12 +495,12 @@ resource "aws_lb_target_group" "app_tg" {
   # 2. ADD 'name_prefix' (Must be 6 characters or less)
   # alway use name_prefix when we have to create and destroy the same resource
   name_prefix          = "tg-${local.env_suffix}"
-  port        = 222
+  port        = 3200
   # port        = 80
   protocol    = "HTTP"
   vpc_id      = aws_vpc.vpc.id
-  # target_type = "ip" # Must be 'ip' when using awsvpc network mode
-  target_type = "instance" # Must be 'ip' when using awsvpc network mode
+  target_type = "ip" # Must be 'ip' when using awsvpc network mode
+  # target_type = "instance" # Must be 'ip' when using awsvpc network mode
 
   # ADD THIS LINE: Lower the wait time from 5 minutes to 30 seconds
   deregistration_delay = 30
@@ -552,8 +554,8 @@ resource "aws_lb_listener" "app_listener_https_secure" {
 resource "aws_ecs_task_definition" "app_task" {
   family                   = "webapp-task-${local.env_suffix}"
   # network_mode             = "host"
-  network_mode             = "bridge"
-  # network_mode             = "awsvpc"
+  # network_mode             = "bridge"
+  network_mode             = "awsvpc"
   requires_compatibilities = ["EC2"] # Changed from FARGATE
   cpu                      = var.app_cpu
   memory                   = var.app_memory
@@ -614,12 +616,13 @@ resource "aws_ecs_service" "app_service" {
   }
 
   # this only works for awsvpc network mode not host network mode
-  # network_configuration {
-  #   subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
-  #   security_groups  = [aws_security_group.app_task_sg.id]
-  #  # assign_public_ip = false 
-  #   assign_public_ip = true # it only works with fargate
-  # }
+  network_configuration {
+    # subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
+    subnets          = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id] 
+    security_groups  = [aws_security_group.app_task_sg.id]
+   assign_public_ip = false 
+    # assign_public_ip = true # it only works with fargate
+  }
 
   # ADD THIS LINE: Give the container 60 seconds to boot before the ALB checks it
   health_check_grace_period_seconds = 60
