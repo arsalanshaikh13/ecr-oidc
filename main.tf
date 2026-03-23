@@ -177,6 +177,11 @@ resource "aws_iam_role_policy_attachment" "ecs_metadata_attach" {
   role       = aws_iam_role.ecs_task_role.name 
   policy_arn = aws_iam_policy.ecs_metadata_policy.arn
 }
+resource "aws_iam_role_policy_attachment" "ecs_metadata_attach_exec" {
+  # Change this to target the Execution Role, since that is what the log says your app is using!
+  role       = aws_iam_role.ecs_task_execution_role.name 
+  policy_arn = aws_iam_policy.ecs_metadata_policy.arn
+}
 #---------------------------------------------
 # 4. Secrets Manager 
 #---------------------------------------------
@@ -459,7 +464,7 @@ resource "aws_lb_target_group" "app_tg" {
   port        = 3200
   protocol    = "HTTP"
   vpc_id      = aws_vpc.vpc.id
-  target_type = "ip" # Must be 'ip' when using awsvpc network mode
+  target_type = "instance" # Must be 'ip' when using awsvpc network mode
 
   # ADD THIS LINE: Lower the wait time from 5 minutes to 30 seconds
   deregistration_delay = 30
@@ -512,7 +517,8 @@ resource "aws_lb_listener" "app_listener_https_secure" {
 #---------------------------------------------
 resource "aws_ecs_task_definition" "app_task" {
   family                   = "webapp-task-${local.env_suffix}"
-  network_mode             = "awsvpc"
+  network_mode             = "host"
+  # network_mode             = "awsvpc"
   requires_compatibilities = ["EC2"] # Changed from FARGATE
   cpu                      = var.app_cpu
   memory                   = var.app_memory
@@ -572,11 +578,13 @@ resource "aws_ecs_service" "app_service" {
     weight            = 100
   }
 
-  network_configuration {
-    subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
-    security_groups  = [aws_security_group.app_task_sg.id]
-    assign_public_ip = false 
-  }
+  # this only works for awsvpc network mode not host network mode
+  # network_configuration {
+  #   subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
+  #   security_groups  = [aws_security_group.app_task_sg.id]
+  #  # assign_public_ip = false 
+  #   assign_public_ip = true 
+  # }
 
   # ADD THIS LINE: Give the container 60 seconds to boot before the ALB checks it
   health_check_grace_period_seconds = 60
