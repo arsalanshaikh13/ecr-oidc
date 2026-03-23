@@ -72,6 +72,11 @@ variable "domain_name" {
   type        = string
   default = "devsandbox.space"
 }
+variable "account_id" {
+  description = "The primary account id"
+  type        = string
+  default = "750702272407"
+}
 
 variable "project_name" {}
 variable "vpc_cidr" {}

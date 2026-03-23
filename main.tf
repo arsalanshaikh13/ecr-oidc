@@ -147,6 +147,36 @@ resource "aws_iam_instance_profile" "ecs_node_profile" {
   role = aws_iam_role.ecs_node_role.name
 }
 
+
+# 1. The Policy that allows your Node.js app to query ECS
+resource "aws_iam_policy" "ecs_metadata_policy" {
+  name        = "ECSMetadataAccessPolicy"
+  description = "Allows the Express app to describe tasks and container instances"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeTasks",
+          "ecs:DescribeContainerInstances"
+        ]
+        # Restrict this to your specific cluster for security
+        Resource = [
+          "arn:aws:ecs:${var.region}:${var.account_id}:task/${aws_ecs_cluster.app_cluster.name}/*",
+          "arn:aws:ecs:${var.region}:${var.account_id}:container-instance/${aws_ecs_cluster.app_cluster.name}/*"
+        ]
+      }
+    ]
+  })
+}
+
+# 2. Attach it to your Task Role (Ensure your ecs_task_role exists!)
+resource "aws_iam_role_policy_attachment" "ecs_metadata_attach" {
+  role       = aws_iam_role.ecs_task_role.name 
+  policy_arn = aws_iam_policy.ecs_metadata_policy.arn
+}
 #---------------------------------------------
 # 4. Secrets Manager 
 #---------------------------------------------
@@ -212,6 +242,14 @@ resource "aws_security_group" "app_task_sg" {
   description = "SG for ECS tasks"
   vpc_id      = aws_vpc.vpc.id
 
+  # ingress {
+  #   description = "node port access"
+  #   from_port   = 3200
+  #   to_port     = 3200
+  #   protocol    = "tcp"
+  #   cidr_blocks = ["0.0.0.0/0"]
+  # }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -222,8 +260,8 @@ resource "aws_security_group" "app_task_sg" {
 
 resource "aws_security_group_rule" "allow_alb_to_tasks" {
   type                     = "ingress"
-  from_port                = 80
-  to_port                  = 80
+  from_port                = 3200
+  to_port                  = 3200
   protocol                 = "tcp"
   security_group_id        = aws_security_group.app_task_sg.id
   source_security_group_id = aws_security_group.alb_sg.id
@@ -234,6 +272,20 @@ resource "aws_security_group" "ecs_node_sg" {
   name        = "ecs-node-sg-${local.env_suffix}"
   description = "SG for ECS EC2 nodes"
   vpc_id      = aws_vpc.vpc.id
+  ingress {
+    description = "node port access"
+    from_port   = 3200
+    to_port     = 3200
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    description = "node port access"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   egress {
     from_port   = 0
@@ -392,8 +444,11 @@ resource "aws_lb" "app_alb" {
 }
 
 resource "aws_lb_target_group" "app_tg" {
-  name        = "tg-${local.env_suffix}"
-  port        = 80
+  # name        = "tg-${local.env_suffix}"
+  # 2. ADD 'name_prefix' (Must be 6 characters or less)
+  # alway use name_prefix when we have to create and destroy the same resource
+  name_prefix          = "tg-${local.env_suffix}"
+  port        = 3200
   protocol    = "HTTP"
   vpc_id      = aws_vpc.vpc.id
   target_type = "ip" # Must be 'ip' when using awsvpc network mode
@@ -403,11 +458,15 @@ resource "aws_lb_target_group" "app_tg" {
 
   health_check {
     path                = "/health"
-    healthy_threshold   = 3
-    unhealthy_threshold = 2
-    timeout             = 5
+    healthy_threshold   = 5
+    unhealthy_threshold = 3
+    timeout             = 15
     interval            = 30
     matcher             = "200-399"
+  }
+  # 3. ADD THIS LIFECYCLE BLOCK
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -460,7 +519,7 @@ resource "aws_ecs_task_definition" "app_task" {
       essential = true
 
       portMappings = [{
-        containerPort = 80
+        containerPort = 3200
         protocol      = "tcp"
       }]
 
@@ -517,7 +576,7 @@ resource "aws_ecs_service" "app_service" {
   load_balancer {
     target_group_arn = aws_lb_target_group.app_tg.arn
     container_name   = "webapp"
-    container_port   = 80
+    container_port   = 3200
   }
 
   deployment_minimum_healthy_percent = 100 
