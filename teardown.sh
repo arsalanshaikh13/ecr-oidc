@@ -72,10 +72,17 @@ while true; do
   fi
 done
 
+# force delete the service
+aws ecs delete-service \
+  --cluster "$CLUSTER_NAME" \
+  --service "$SERVICE_NAME" \
+  --force \
+  --region "$REGION"
+
 # Step 3: Trigger Terraform
 echo "======================================================"
 echo " 🌪️  Infrastructure is clear. Triggering Terraform... "
 echo "======================================================"
 
 # We use the standard command so you still get the [yes/no] safety prompt
-terraform destroy -var-file=dev.tfvars -auto-approve
+terraform destroy -var-file=dev.tfvars -parallelism=20 -auto-approve 

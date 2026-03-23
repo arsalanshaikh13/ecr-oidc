@@ -511,12 +511,12 @@ resource "aws_ecs_service" "app_service" {
   ]
 
   # THIS IS THE CRITICAL ADDITION
-  # lifecycle {
-  #   ignore_changes = [
-  #     task_definition,
-  #     # desired_count # Also good to ignore if you plan to use ECS Auto Scaling later
-  #   ]
-  # }
+  lifecycle {
+    ignore_changes = [
+      task_definition,
+      # desired_count # Also good to ignore if you plan to use ECS Auto Scaling later
+    ]
+  }
 
   tags = local.common_tags
 }
