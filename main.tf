@@ -242,13 +242,13 @@ resource "aws_security_group" "app_task_sg" {
   description = "SG for ECS tasks"
   vpc_id      = aws_vpc.vpc.id
 
-  # ingress {
-  #   description = "node port access"
-  #   from_port   = 3200
-  #   to_port     = 3200
-  #   protocol    = "tcp"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  # }
+  ingress {
+    description = "http port access"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   egress {
     from_port   = 0
@@ -266,6 +266,14 @@ resource "aws_security_group_rule" "allow_alb_to_tasks" {
   security_group_id        = aws_security_group.app_task_sg.id
   source_security_group_id = aws_security_group.alb_sg.id
 }
+# resource "aws_vpc_security_group_ingress_rule" "allow_http" {
+#   security_group_id = aws_security_group.app_task_sg.id
+#   cidr_ipv4         = "0.0.0.0/0"
+#   from_port         = 80
+#   ip_protocol       = "tcp"
+#   to_port           = 80
+# }
+
 
 # NEW: Node SG (For the underlying EC2 instances to talk to AWS endpoints)
 resource "aws_security_group" "ecs_node_sg" {
