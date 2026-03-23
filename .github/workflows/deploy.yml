@@ -3,10 +3,9 @@ name: Build, Push, and Deploy to ECS
 on:
   push:
     branches:
-      - main
-      - fargate
+      - ecr-lb-fargate
     paths:
-      - "frontend/**"
+      - "ecr-lb/**"
       - ".github/workflows/**" # Triggers if you update this pipeline file
   workflow_dispatch: # Allows you to trigger deployments/secret rotations manually via the GitHub UI
 
@@ -80,7 +79,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           # IMAGE_TAG: latest
         run: |
-          cd frontend
+          cd ecr-lb
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           # Output the image URI for the next step

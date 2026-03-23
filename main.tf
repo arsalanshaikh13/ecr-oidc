@@ -98,6 +98,12 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   tags               = local.common_tags
 }
 
+# Task Role (For Application Code)
+resource "aws_iam_role" "ecs_task_role" {
+  name               = "ecsTaskRole-${local.env_suffix}"
+  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role_policy.json
+}
+
 data "aws_iam_policy_document" "ecs_task_assume_role_policy" {
   statement {
     effect = "Allow"
@@ -137,6 +143,41 @@ resource "aws_iam_policy" "ecs_task_secrets_policy" {
 resource "aws_iam_role_policy_attachment" "ecs_task_secrets_attach" {
   role       = aws_iam_role.ecs_task_execution_role.name
   policy_arn = aws_iam_policy.ecs_task_secrets_policy.arn
+}
+
+# 1. The Policy that allows your Node.js app to query ECS
+resource "aws_iam_policy" "ecs_metadata_policy" {
+  name        = "ECSMetadataAccessPolicy"
+  description = "Allows the Express app to describe tasks and container instances"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:DescribeTasks",
+          "ecs:DescribeContainerInstances"
+        ]
+        # Restrict this to your specific cluster for security
+        Resource = [
+          "arn:aws:ecs:${var.region}:${var.account_id}:task/${aws_ecs_cluster.app_cluster.name}/*",
+          "arn:aws:ecs:${var.region}:${var.account_id}:container-instance/${aws_ecs_cluster.app_cluster.name}/*"
+        ]
+      }
+    ]
+  })
+}
+
+# 2. Attach it to your Task Role (Ensure your ecs_task_role exists!)
+resource "aws_iam_role_policy_attachment" "ecs_metadata_attach" {
+  role       = aws_iam_role.ecs_task_role.name 
+  policy_arn = aws_iam_policy.ecs_metadata_policy.arn
+}
+resource "aws_iam_role_policy_attachment" "ecs_metadata_attach_exec" {
+  # Change this to target the Execution Role, since that is what the log says your app is using!
+  role       = aws_iam_role.ecs_task_execution_role.name 
+  policy_arn = aws_iam_policy.ecs_metadata_policy.arn
 }
 
 #---------------------------------------------
@@ -204,7 +245,7 @@ resource "aws_security_group" "alb_sg" {
 
 resource "aws_security_group" "app_task_sg" {
   name        = "webapp-task-sg-${local.env_suffix}"
-  description = "SG for ECS tasks to allow egress to AWS endpoints; ALB allowed to connect on 80"
+  description = "SG for ECS tasks to allow egress to AWS endpoints; ALB allowed to connect on 3200"
   # vpc_id      = var.vpc_id
   vpc_id = aws_vpc.vpc.id
   tags   = local.common_tags
@@ -223,8 +264,8 @@ resource "aws_security_group" "app_task_sg" {
 
 resource "aws_security_group_rule" "allow_alb_to_tasks" {
   type              = "ingress"
-  from_port         = 80
-  to_port           = 80
+  from_port         = 3200
+  to_port           = 3200
   protocol          = "tcp"
   security_group_id = aws_security_group.app_task_sg.id
   # source_security_group_id = var.alb_sg_id
@@ -321,14 +362,14 @@ resource "aws_lb" "app_alb" {
 
 resource "aws_lb_target_group" "app_tg" {
   name     = "tg-${local.env_suffix}"
-  port     = 80
+  port     = 3200
   protocol = "HTTP"
   # vpc_id      = var.vpc_id
   vpc_id      = aws_vpc.vpc.id
   target_type = "ip"
 
   health_check {
-    path                = "/"
+    path                = "/health"
     healthy_threshold   = 3
     unhealthy_threshold = 2
     timeout             = 5
@@ -380,7 +421,7 @@ resource "aws_ecs_task_definition" "app_task" {
   cpu                      = var.app_cpu
   memory                   = var.app_memory
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
-
+  task_role_arn            = aws_iam_role.ecs_task_role.arn   
   # ensure the image is pushed and log group exists before registering the task definition
   depends_on = [
     # null_resource.frontend_image,
@@ -396,7 +437,7 @@ resource "aws_ecs_task_definition" "app_task" {
 
       portMappings = [
         {
-          containerPort = 80
+          containerPort = 3200
           protocol      = "tcp"
         }
       ]
@@ -456,7 +497,7 @@ resource "aws_ecs_service" "app_service" {
   load_balancer {
     target_group_arn = aws_lb_target_group.app_tg.arn
     container_name   = "webapp"
-    container_port   = 80
+    container_port   = 3200
   }
 
   deployment_minimum_healthy_percent = 50
