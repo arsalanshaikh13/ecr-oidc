@@ -464,6 +464,7 @@ resource "aws_lb_target_group" "app_tg" {
   port        = 3200
   protocol    = "HTTP"
   vpc_id      = aws_vpc.vpc.id
+  # target_type = "ip" # Must be 'ip' when using awsvpc network mode
   target_type = "instance" # Must be 'ip' when using awsvpc network mode
 
   # ADD THIS LINE: Lower the wait time from 5 minutes to 30 seconds
@@ -517,7 +518,8 @@ resource "aws_lb_listener" "app_listener_https_secure" {
 #---------------------------------------------
 resource "aws_ecs_task_definition" "app_task" {
   family                   = "webapp-task-${local.env_suffix}"
-  network_mode             = "host"
+  # network_mode             = "host"
+  network_mode             = "bridge"
   # network_mode             = "awsvpc"
   requires_compatibilities = ["EC2"] # Changed from FARGATE
   cpu                      = var.app_cpu
@@ -583,7 +585,7 @@ resource "aws_ecs_service" "app_service" {
   #   subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
   #   security_groups  = [aws_security_group.app_task_sg.id]
   #  # assign_public_ip = false 
-  #   assign_public_ip = true 
+  #   assign_public_ip = true # it only works with fargate
   # }
 
   # ADD THIS LINE: Give the container 60 seconds to boot before the ALB checks it
