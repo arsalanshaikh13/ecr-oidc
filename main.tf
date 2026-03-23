@@ -254,6 +254,20 @@ resource "aws_security_group" "app_task_sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
+  ingress {
+    description = "node port access"
+    from_port                = 3200
+    to_port                  = 3200
+    protocol                 = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+  ingress {
+    description = "node port access"
+    from_port                = 32768
+    to_port                  = 65535
+    protocol                 = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
 
   egress {
     from_port   = 0
@@ -263,14 +277,24 @@ resource "aws_security_group" "app_task_sg" {
   }
 }
 
-resource "aws_security_group_rule" "allow_alb_to_tasks" {
-  type                     = "ingress"
-  from_port                = 3200
-  to_port                  = 3200
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.app_task_sg.id
-  source_security_group_id = aws_security_group.alb_sg.id
-}
+# resource "aws_security_group_rule" "allow_alb_to_tasks" {
+#   type                     = "ingress"
+#   from_port                = 3200
+#   to_port                  = 3200
+#   protocol                 = "tcp"
+#   security_group_id        = aws_security_group.app_task_sg.id
+#   source_security_group_id = aws_security_group.alb_sg.id
+# }
+# resource "aws_security_group_rule" "allow_alb_to_tasks" {
+#   type                     = "ingress"
+#   from_port                = 32768
+#   to_port                  = 65535
+#   protocol                 = "tcp"
+#   security_group_id        = aws_security_group.app_task_sg.id
+#   source_security_group_id = aws_security_group.alb_sg.id
+# }
+
+
 # resource "aws_vpc_security_group_ingress_rule" "allow_http" {
 #   security_group_id = aws_security_group.app_task_sg.id
 #   cidr_ipv4         = "0.0.0.0/0"
@@ -298,6 +322,14 @@ resource "aws_security_group" "ecs_node_sg" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "node port access"
+    from_port                = 32768
+    to_port                  = 65535
+    protocol                 = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
   }
 
   egress {
@@ -461,7 +493,8 @@ resource "aws_lb_target_group" "app_tg" {
   # 2. ADD 'name_prefix' (Must be 6 characters or less)
   # alway use name_prefix when we have to create and destroy the same resource
   name_prefix          = "tg-${local.env_suffix}"
-  port        = 3200
+  port        = 222
+  # port        = 80
   protocol    = "HTTP"
   vpc_id      = aws_vpc.vpc.id
   # target_type = "ip" # Must be 'ip' when using awsvpc network mode
