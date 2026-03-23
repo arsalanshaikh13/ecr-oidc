@@ -495,7 +495,8 @@ resource "aws_lb_target_group" "app_tg" {
   # 2. ADD 'name_prefix' (Must be 6 characters or less)
   # alway use name_prefix when we have to create and destroy the same resource
   name_prefix          = "tg-${local.env_suffix}"
-  port        = 3200
+  # port        = 3200
+  port        = 222
   # port        = 80
   protocol    = "HTTP"
   vpc_id      = aws_vpc.vpc.id
