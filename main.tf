@@ -621,7 +621,7 @@ resource "aws_ecs_service" "app_service" {
     # subnets          = [aws_subnet.pub_sub_1a.id, aws_subnet.pub_sub_2b.id] 
     subnets          = [aws_subnet.pri_sub_3a.id, aws_subnet.pri_sub_4b.id] 
     security_groups  = [aws_security_group.app_task_sg.id]
-   assign_public_ip = false 
+    assign_public_ip = false 
     # assign_public_ip = true # it only works with fargate
   }
 
