@@ -448,7 +448,9 @@ resource "aws_ecs_task_definition" "app_task" {
           value = local.env_suffix
         }
       ]
-
+      # ADD THIS: Forces Fargate to only wait 5 seconds before killing the container
+      stopTimeout = 5
+      
       secrets = [
         {
           name = "APP_SECRET"
@@ -509,12 +511,12 @@ resource "aws_ecs_service" "app_service" {
   ]
 
   # THIS IS THE CRITICAL ADDITION
-  lifecycle {
-    ignore_changes = [
-      task_definition,
-      desired_count # Also good to ignore if you plan to use ECS Auto Scaling later
-    ]
-  }
+  # lifecycle {
+  #   ignore_changes = [
+  #     task_definition,
+  #     # desired_count # Also good to ignore if you plan to use ECS Auto Scaling later
+  #   ]
+  # }
 
   tags = local.common_tags
 }

@@ -29,6 +29,7 @@
           "valueFrom": "<APP_SECRET_ARN>"
         }
       ],
+      "stopTimeout": 5,
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {

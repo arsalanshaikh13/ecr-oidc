@@ -26,7 +26,7 @@ app_sg_id = "sg-id2"
 app_cpu       = 256 # 0.25 vCPU
 app_memory    = 512 # 0.5 GB
 image_tag     = "latest"
-desired_count = 1
+desired_count = 2
 
 # Secret (use ARN of secret in AWS Secrets Manager)
 secret_key     = "Secret Key"

@@ -13,6 +13,10 @@ resource "aws_vpc" "vpc" {
 # create internet gateway and attach it to vpc
 resource "aws_internet_gateway" "internet_gateway" {
   vpc_id = aws_vpc.vpc.id
+  # ADD THIS: Force Terraform to give up faster if AWS hangs
+  timeouts {
+    delete = "5m" 
+  }
 
   tags = {
     Name = "${var.project_name}-igw"
