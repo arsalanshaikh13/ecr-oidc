@@ -1,11 +1,11 @@
-name: Build, Push, and Deploy to ECS
+name: Build, Push, and Deploy to ECS -lirw monolith fargate
 
 on:
   push:
     branches:
-      - ecr-lb-fargate
+      - lirw-node-monolith-fargate
     paths:
-      - "ecr-lb/**"
+      - "lirw-node-monolith/**"
       - ".github/workflows/**" # Triggers if you update this pipeline file
   workflow_dispatch: # Allows you to trigger deployments/secret rotations manually via the GitHub UI
 
@@ -39,33 +39,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # ---------------------------------------------------------
-      # IDEMPOTENT SECRET SYNC
-      # ---------------------------------------------------------
-      - name: Sync  Secret to AWS Secrets Manager
-        env:
-          SECRET_ID: "${{ env.PROJECT_NAME }}-secret"
-          SECRET_VALUE: ${{ secrets.APP_SECRET_KEY }}
-        run: |
-          # 1. Fetch the current secret from AWS (suppress errors if it hasn't been created yet)
-          CURRENT_SECRET=$(aws secretsmanager get-secret-value --secret-id $SECRET_ID --query 'SecretString' --output text 2>/dev/null || echo "NOT_FOUND")
-
-          # 2. Compare and update only if the value has changed
-          if [ "$CURRENT_SECRET" != "$SECRET_VALUE" ]; then
-            echo "Changes detected or secret missing. Pushing new plaintext value to AWS..."
-            JSON_STRING=$(jq -n --arg key "$SECRET_VALUE" '{APP_SECRET_KEY: $key}')
-
-            # Push the new value to AWS Secrets Manager
-            aws secretsmanager put-secret-value \
-              --secret-id $SECRET_ID \
-              --secret-string "$JSON_STRING"
-            
-            echo "Successfully updated secret: $SECRET_ID"
-
-          else
-            echo "Secret matches existing AWS version. Skipping update."
-          fi
-
-      # ---------------------------------------------------------
       # BUILD & DEPLOY
       # ---------------------------------------------------------
       - name: Login to Amazon ECR
@@ -79,7 +52,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           # IMAGE_TAG: latest
         run: |
-          cd ecr-lb
+          cd lirw-node-monolith
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           # Output the image URI for the next step
@@ -102,23 +75,6 @@ jobs:
           mv temp.json ${{ env.ECS_TASK_DEFINITION }}
 
           echo "Successfully injected variables into ${{ env.ECS_TASK_DEFINITION }}"
-
-      # ---------------------------------------------------------
-      # INJECT DYNAMIC ARN INTO TASK DEFINITION
-      # ---------------------------------------------------------
-      - name: Inject Secret ARN into Task Definition
-        env:
-          SECRET_ID: "${{ env.PROJECT_NAME }}-secret"
-        run: |
-          # 1. Ask AWS for the exact ARN of the secret
-          EXACT_ARN=$(aws secretsmanager describe-secret --secret-id $SECRET_ID --query 'ARN' --output text)
-
-          echo "Found Secret ARN: $EXACT_ARN"
-
-          # 2. Replace the placeholder in the JSON file with the real ARN
-          sed -i "s|<APP_SECRET_ARN>|$EXACT_ARN|g" ${{ env.ECS_TASK_DEFINITION }}
-
-          echo "Successfully injected ARN into task-definition.json"
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def

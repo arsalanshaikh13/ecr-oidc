@@ -123,27 +123,6 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Optional: Allow read access to Secrets Manager (execution role)
-data "aws_iam_policy_document" "ecs_task_secrets_policy_doc" {
-  statement {
-    sid     = "AllowReadSecrets"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      # var.app_secret_arn
-      aws_secretsmanager_secret.app_secret.arn
-    ]
-  }
-}
-
-resource "aws_iam_policy" "ecs_task_secrets_policy" {
-  name   = "ecsTaskSecretsPolicy-${local.env_suffix}"
-  policy = data.aws_iam_policy_document.ecs_task_secrets_policy_doc.json
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_task_secrets_attach" {
-  role       = aws_iam_role.ecs_task_execution_role.name
-  policy_arn = aws_iam_policy.ecs_task_secrets_policy.arn
-}
 
 # 1. The Policy that allows your Node.js app to query ECS
 resource "aws_iam_policy" "ecs_metadata_policy" {
@@ -179,30 +158,6 @@ resource "aws_iam_role_policy_attachment" "ecs_metadata_attach_exec" {
   role       = aws_iam_role.ecs_task_execution_role.name 
   policy_arn = aws_iam_policy.ecs_metadata_policy.arn
 }
-
-#---------------------------------------------
-# 8. Secret Manager creating secret
-#---------------------------------------------
-
-resource "aws_secretsmanager_secret" "app_secret" {
-  name        = "${var.project_name}-secret"
-  description = " application secret key"
-  # kms_key_id  = "alias/aws/secretsmanager" # Or a custom KMS key ARN
-  recovery_window_in_days = 0 #force delete,
-  tags = merge(local.common_tags, {
-    Name = "${var.project_name}-secret"
-  })
-
-}
-
-# using ci/cd pipeline to create aws secret
-# resource "aws_secretsmanager_secret_version" "app_secret_version" {
-#   secret_id = aws_secretsmanager_secret.app_secret.id
-#   secret_string = jsonencode({
-#     APP_SECRET_KEY = "${var.secret_key}"
-
-#   })
-# }
 
 
 #---------------------------------------------
@@ -451,14 +406,7 @@ resource "aws_ecs_task_definition" "app_task" {
       # ADD THIS: Forces Fargate to only wait 5 seconds before killing the container
       stopTimeout = 5
       
-      secrets = [
-        {
-          name = "APP_SECRET"
-          # valueFrom = var.app_secret_arn
-          valueFrom = aws_secretsmanager_secret.app_secret.arn
-        }
-      ]
-
+      
       logConfiguration = {
         logDriver = "awslogs"
         options = {
