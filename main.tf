@@ -515,8 +515,8 @@ resource "aws_lb_listener" "app_listener_https_secure" {
 #---------------------------------------------
 resource "aws_ecs_task_definition" "app_task" {
   family                   = "webapp-task-${local.env_suffix}"
-  # network_mode             = "host"
-  network_mode             = "bridge"
+  network_mode             = "host"
+  # network_mode             = "bridge"
   # network_mode             = "awsvpc"
   requires_compatibilities = ["EC2"] # Changed from FARGATE
   cpu                      = var.app_cpu
