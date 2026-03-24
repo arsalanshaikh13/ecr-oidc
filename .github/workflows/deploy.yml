@@ -1,11 +1,11 @@
-name: Build, Push, and Deploy to ECS -lirw monolith fargate
+name: Build, Push, and Deploy to ECS -lirw  node monolith fargate
 
 on:
   push:
     branches:
       - lirw-node-monolith-fargate
     paths:
-      - "lirw-node-monolith/**"
+      - "lirw-node-monolith-app/**"
       - ".github/workflows/**" # Triggers if you update this pipeline file
   workflow_dispatch: # Allows you to trigger deployments/secret rotations manually via the GitHub UI
 
@@ -52,7 +52,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
           # IMAGE_TAG: latest
         run: |
-          cd lirw-node-monolith
+          cd lirw-node-monolith-app
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           # Output the image URI for the next step
