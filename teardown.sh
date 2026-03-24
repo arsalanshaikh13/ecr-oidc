@@ -76,9 +76,15 @@ done
 aws ecs delete-service \
   --cluster "$CLUSTER_NAME" \
   --service "$SERVICE_NAME" \
+  --region "$REGION" \
   --force \
-  --region "$REGION"
+  --no-cli-pager
 
+aws ecs delete-service \
+  --cluster "$CLUSTER_NAME" \
+  --service "$SERVICE_NAME" \
+  --region "$REGION" \
+  --no-cli-pager
 # Step 3: Trigger Terraform
 echo "======================================================"
 echo " 🌪️  Infrastructure is clear. Triggering Terraform... "
