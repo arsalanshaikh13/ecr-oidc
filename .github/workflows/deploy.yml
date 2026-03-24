@@ -1,4 +1,4 @@
-name: Build, Push, and Deploy to ECS
+name: Build, Push, and Deploy to ECS - lirw node monolith ec2
 
 on:
   push:
