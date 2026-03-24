@@ -3,3 +3,4 @@
 terraform.*
 *.bak*
 frontend/**
+ecr-lb/**

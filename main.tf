@@ -103,24 +103,6 @@ resource "aws_iam_role" "ecs_task_role" {
   assume_role_policy = data.aws_iam_policy_document.ecs_assume_role.json
 }
 
-# Allow Execution role to read Secrets Manager
-resource "aws_iam_policy" "ecs_task_secrets_policy" {
-  name = "ecsTaskSecretsPolicy-${local.env_suffix}"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action   = ["secretsmanager:GetSecretValue"]
-      Effect   = "Allow"
-      Resource = [aws_secretsmanager_secret.app_secret.arn]
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "ecs_task_secrets_attach" {
-  role       = aws_iam_role.ecs_task_execution_role.name
-  policy_arn = aws_iam_policy.ecs_task_secrets_policy.arn
-}
-
 # NEW: IAM Role & Profile for the underlying EC2 Instances
 data "aws_iam_policy_document" "ec2_assume_role" {
   statement {
@@ -182,23 +164,6 @@ resource "aws_iam_role_policy_attachment" "ecs_metadata_attach_exec" {
   role       = aws_iam_role.ecs_task_execution_role.name 
   policy_arn = aws_iam_policy.ecs_metadata_policy.arn
 }
-#---------------------------------------------
-# 4. Secrets Manager 
-#---------------------------------------------
-resource "aws_secretsmanager_secret" "app_secret" {
-  name                    = "${var.project_name}-secret"
-  description             = "Application secret key container"
-  recovery_window_in_days = 0 
-  tags = merge(local.common_tags, { Name = "${var.project_name}-secret" })
-}
-
-# resource "aws_secretsmanager_secret_version" "app_secret_version" {
-#   secret_id = aws_secretsmanager_secret.app_secret.id
-#   secret_string = jsonencode({
-#     APP_SECRET_KEY = "${var.secret_key}"
-
-#   })
-# }
 
 
 
@@ -295,14 +260,6 @@ resource "aws_security_group" "app_task_sg" {
 # }
 
 
-# resource "aws_vpc_security_group_ingress_rule" "allow_http" {
-#   security_group_id = aws_security_group.app_task_sg.id
-#   cidr_ipv4         = "0.0.0.0/0"
-#   from_port         = 80
-#   ip_protocol       = "tcp"
-#   to_port           = 80
-# }
-
 
 # NEW: Node SG (For the underlying EC2 instances to talk to AWS endpoints)
 resource "aws_security_group" "ecs_node_sg" {
@@ -314,14 +271,18 @@ resource "aws_security_group" "ecs_node_sg" {
     from_port   = 3200
     to_port     = 3200
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    # cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.alb_sg.id]
+
   }
   ingress {
     description = "node port access"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    # cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.alb_sg.id]
+
   }
 
   ingress {
@@ -580,10 +541,6 @@ resource "aws_ecs_task_definition" "app_task" {
         value = local.env_suffix
       }]
 
-      secrets = [{
-        name      = "APP_SECRET"
-        valueFrom = aws_secretsmanager_secret.app_secret.arn
-      }]
 
       logConfiguration = {
         logDriver = "awslogs"

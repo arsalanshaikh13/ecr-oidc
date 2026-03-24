@@ -23,12 +23,6 @@
           "value": "$ENV_VAR"
         }
       ],
-      "secrets": [
-        {
-          "name": "APP_SECRET",
-          "valueFrom": "<APP_SECRET_ARN>"
-        }
-      ],
       "logConfiguration": {
         "logDriver": "awslogs",
         "options": {
